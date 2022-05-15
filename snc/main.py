@@ -86,7 +86,8 @@ def scores_to_comparison_matrix(similar_pairs, nrows, ncols):
     return comparisons
 
 
-def pearson_correlation(row_i, row_j, cache={}):
+#def pearson_correlation(row_i, row_j, cache={}):
+def pearson_correlation(comparison_matrix, i, j, q_cache={}, s_cache={}):
     '''
     Compute the Pearson correlation for values of two rows in matrix.
     There are convenient functions for this in SciPy and elsewhere, 
@@ -98,11 +99,27 @@ def pearson_correlation(row_i, row_j, cache={}):
     the multiplications in the vector computation are fast due to sparsity,
     end the final sum are on scalars. 
     '''
-    m_i = row_i.mean()
-    m_j = row_j.mean()
-    n_cols = row_i.shape[1]
-    numerator = row_i.dot(row_j.transpose())[0,0] - m_i * row_j.sum() - m_j * row_i.sum() + n_cols * m_i * m_j
-    denominator = math.sqrt((row_i.dot(row_i.transpose())[0,0] - 2 * m_i*row_i.sum() + n_cols * m_i * m_i) * (row_j.dot(row_j.transpose())[0,0] - 2 * m_j * row_j.sum() + n_cols * m_j * m_j))
+    row_i = comparison_matrix.getrow(i)
+    row_j = comparison_matrix.getrow(j)
+    n_cols = comparison_matrix.shape[1]
+
+    if i in q_cache:
+        m_i, s_i, i_variance = q_cache[i]
+    else:
+        m_i = row_i.mean()
+        s_i = row_i.sum()
+        i_variance = row_i.dot(row_i.transpose())[0,0] - 2 * m_i*s_i + n_cols * m_i * m_i
+        q_cache[i] = (m_i, s_i, i_variance)
+    if j in s_cache:
+        m_j, s_j, j_variance = s_cache[j]
+    else:
+        m_j = row_j.mean()
+        s_j = row_j.sum()
+        j_variance = row_j.dot(row_j.transpose())[0,0] - 2 * m_j*s_j + n_cols * m_j * m_j
+        s_cache[j] = (m_j, s_j, j_variance)
+
+    numerator = row_i.dot(row_j.transpose())[0,0] - m_i * s_j - m_j * s_i + n_cols * m_i * m_j
+    denominator = math.sqrt(i_variance * j_variance)
 
     correlation_coefficient = numerator / denominator
     return correlation_coefficient
@@ -117,6 +134,19 @@ def snd(x):
 
 
 def find_good_pairs(comparison_matrix):
+    '''We want to extract pairs of sequences that are either directly linked
+    because the have reported similarity, or indirectly link through other
+    similar sequences. In this latter case, it is assumed that the sequence
+    similarity is so low that BLAST missed it, for example, but similarity
+    should still be investigated.
+
+    Returns an iterator with triples (idx1, idx2, grouplabel). The idx elements
+    are row indices into the comparison matrix, and grouplabel is an integer
+    indicating the subset the indexed sequences belong to.
+
+    Implemented using connected components in a graph, so basically
+    linear time to compute.
+    '''
     n_rows, n_cols = comparison_matrix.shape
     # Add an n_rows x n_rows block on the left
     left_padding = sp.csr_array((n_rows, n_rows))
@@ -133,7 +163,7 @@ def find_good_pairs(comparison_matrix):
     for label, labeling in itertools.groupby(enumerate(labeling[:n_rows]), key=snd):
         component = map(fst, labeling) # extract indices for component
         for a, b in itertools.combinations(component, 2):
-            yield a, b
+            yield a, b, label
 
 
 def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, threshold=0):
@@ -144,14 +174,11 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
     good_pairs = find_good_pairs(comparison_matrix > threshold)
 
     logging.info('Starting NC computations')
-    for a, b in good_pairs:
-        a_row = comparison_matrix.getrow(a)
-        b_row = comparison_matrix.getrow(b)
-        # print(a, 'row: ', a_row)
-        # print(b, 'row: ', b_row)
-        cache = dict()          # Using a cache to avoid computing denominator factors more than once
-        cor = pearson_correlation(a_row, b_row, cache)
-        yield id2accession[a], id2accession[b], cor
+    q_cache = dict()          # Using a cache to avoid computing denominator factors more than once
+    s_cache = dict()
+    for a, b, group in good_pairs:
+        cor = pearson_correlation(comparison_matrix, a, b, q_cache, s_cache)
+        yield id2accession[a], id2accession[b], cor, group
             
             
 def nc_main():
@@ -161,7 +188,7 @@ def nc_main():
     ap.add_argument('-a', '--all-vs-all', action='store_true',
                     help='If your comparisons are all-versus-all. Otherwise it is assumed that the sequences you are interested in have been compared with reference database.')
     ap.add_argument('-c', '--consider', type=float, metavar='TRESHOLD', default=consideration_threshold,
-                    help='Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
+                    help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
     ap.add_argument('-3', '--three-col', action='store_true',
                     help='Actually, assume the input file has three columns (acc1, acc2, and bitscore) separated by single blankspace, like NC_standalone.')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
@@ -170,6 +197,9 @@ def nc_main():
                     help='Output some progress information')
 
     args = ap.parse_args()
+
+    if args.all_vs_all:
+        sys.exit('Not implemented yet. Requires a symmetric scoring matrix. Currently, comparisonmatrix[i][i] refers to "query i" and "subject i", which is not the same sequence.')
 
     if args.verbose:
         logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S', level=logging.INFO)
@@ -185,9 +215,9 @@ def nc_main():
             id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_3col_format(f)
             
     if similar_pairs:
-        for acc1, acc2, nc in neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, args.consider):
+        for acc1, acc2, nc, group in neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, args.consider):
             if nc >= args.nc_thresh:
-                print(acc1, acc2, round(nc, 3))
+                print(acc1, acc2, round(nc, 3), group)
 
     logging.info('Done')
 
