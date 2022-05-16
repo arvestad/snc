@@ -81,13 +81,18 @@ def read_blast_3col_format(fh):
 
 
 def scores_to_comparison_matrix(similar_pairs, nrows, ncols):
+    '''
+    Given a list of triples (idx1, idx2, bitscore), return 
+    a sparse matrix containing the same information. The indices are integers pointing to the
+    rows and columns where the score should be put. The nrows and ncols variables are
+    needed to avoid computing maximum indices. 
+    '''
     logging.info(f'Preparing matrix with similarity data ({nrows} by {ncols}, but a sparse matrix)')
     row_indices, col_indices = zip(*similar_pairs.keys())
     comparisons = sp.csr_array((list(similar_pairs.values()), (row_indices, col_indices)), shape=(nrows, ncols), dtype=np.float32)
     return comparisons
 
 
-#def pearson_correlation(row_i, row_j, cache={}):
 def pearson_correlation(comparison_matrix, i, j, cache={}):
     '''
     Compute the Pearson correlation for values of two rows in matrix.
@@ -127,10 +132,12 @@ def pearson_correlation(comparison_matrix, i, j, cache={}):
     
 
 def fst(x):
+    '''Return first element of tuple/list x.'''
     return x[0]
 
 
 def snd(x):
+    '''Return second element of tuple/list x.'''
     return x[1]
 
 
