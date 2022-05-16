@@ -31,7 +31,7 @@ def acc_dict_update(d, acc):
 #     ie, part of DB. We don't care, because only query IDs, which will be used
 #     as row IDs, will be used later. Column order does not matter.
 
-def read_blast_tab(fh):
+def read_blast_tab(file_handles):
     '''
     Read the file containing standard Blast tabular results (from BLAST or DIAMOND)
     and return the needed data.
@@ -47,20 +47,21 @@ def read_blast_tab(fh):
     id2accession = dict()       # ... and back
     similar_pairs = dict()
 
-    reader = csv.reader(fh, delimiter='\t')
-    for row in reader:
-        query_id, subject_id, bit_score = row[0], row[1], row[11]
-        
-        id1 = acc_dict_update(q_accession2id, query_id)
-        id2 = acc_dict_update(s_accession2id, subject_id)
-        id2accession[id1] = query_id
-
-        similar_pairs[(id1, id2)] = float(bit_score)
+    for fh in file_handles:
+        reader = csv.reader(fh, delimiter='\t')
+        for row in reader:
+            query_id, subject_id, bit_score = row[0], row[1], row[11]
+            id1 = acc_dict_update(q_accession2id, query_id)
+            id2 = acc_dict_update(s_accession2id, subject_id)
+            if query_id in ['PIENAPT00000013550', 'NP_001037207.1'] :
+                logging.info(id1)
+            id2accession[id1] = query_id
+            similar_pairs[(id1, id2)] = float(bit_score)
 
     return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1
 
 
-def read_blast_3col_format(fh):
+def read_blast_3col_format(file_handles):
     '''
     Same is read_blast_tab, but for three-column data like NC_standalone input.
     '''
@@ -69,13 +70,14 @@ def read_blast_3col_format(fh):
     id2accession = dict()         # ... and back
     similar_pairs = dict()
 
-    reader = csv.reader(fh, delimiter=' ')
-    for row in reader:
-        queryid, subject_id, bit_score = row
-        id1 = acc_dict_update(q_accession2id, queryid)
-        id2 = acc_dict_update(s_accession2id, subject_id)
-        id2accession[id1] = queryid
-        similar_pairs[(id1, id2)] = float(bit_score)
+    for fh in file_handles:
+        reader = csv.reader(fh, delimiter=' ')
+        for row in reader:
+            queryid, subject_id, bit_score = row
+            id1 = acc_dict_update(q_accession2id, queryid)
+            id2 = acc_dict_update(s_accession2id, subject_id)
+            id2accession[id1] = queryid
+            similar_pairs[(id1, id2)] = float(bit_score)
 
     return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1
 
@@ -167,7 +169,7 @@ def find_good_pairs(comparison_matrix):
     # Now compute connected components
     n_components, labeling = sp.csgraph.connected_components(G, directed=False)
     del G                       # ... and forget this large matrix
-    labeling = list(labeling[:n_rows])
+    labeling = labeling[:n_rows]
     n_components = len(collections.Counter(labeling))
     logging.info(f'Identified {n_components} groups of sequences to compute NC for')
 
@@ -181,7 +183,7 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
     logging.info('Preparing NC data')
     comparison_matrix = scores_to_comparison_matrix(similar_pairs, n_queries, n_ref_seqs)
 
-    logging.info('Identifying sequence pairs to compute NC for')
+    logging.info('Identifying sequence pairs to compute NC for.')
     good_pairs = find_good_pairs(comparison_matrix > threshold)
 
     logging.info('Starting NC computations')
@@ -192,7 +194,8 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
             
 def nc_main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('infile',
+    ap.add_argument('infile', nargs='+', type=argparse.FileType('r'),
+                    default=sys.stdin,
                     help='The infile is the path to a file containing BLAST or DIAMOND output in tabular format (using --outfmt 6 in both tools)')
     ap.add_argument('-a', '--all-vs-all', action='store_true',
                     help='If your comparisons are all-versus-all. Otherwise it is assumed that the sequences you are interested in have been compared with reference database.')
@@ -216,12 +219,11 @@ def nc_main():
         logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         
 
-    with open(args.infile) as f:
-        logging.info('Reading data')
-        if not args.three_col:
-            id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_tab(f)
-        else:
-            id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_3col_format(f)
+    logging.info('Reading data')
+    if not args.three_col:
+        id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_tab(args.infile) # Note: args.infile is a list of filehandles
+    else:
+        id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_3col_format(args.infile)
             
     if similar_pairs:
         for acc1, acc2, nc, group in neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, args.consider):
