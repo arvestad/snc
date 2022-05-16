@@ -1,4 +1,5 @@
 import argparse
+import collections
 import csv
 import itertools
 import logging
@@ -87,7 +88,7 @@ def scores_to_comparison_matrix(similar_pairs, nrows, ncols):
 
 
 #def pearson_correlation(row_i, row_j, cache={}):
-def pearson_correlation(comparison_matrix, i, j, q_cache={}, s_cache={}):
+def pearson_correlation(comparison_matrix, i, j, cache={}):
     '''
     Compute the Pearson correlation for values of two rows in matrix.
     There are convenient functions for this in SciPy and elsewhere, 
@@ -103,23 +104,23 @@ def pearson_correlation(comparison_matrix, i, j, q_cache={}, s_cache={}):
     row_j = comparison_matrix.getrow(j)
     n_cols = comparison_matrix.shape[1]
 
-    if i in q_cache:
-        m_i, s_i, i_variance = q_cache[i]
+    if i in cache:
+        m_i, s_i, root_variance_i = cache[i]
     else:
         m_i = row_i.mean()
         s_i = row_i.sum()
-        i_variance = row_i.dot(row_i.transpose())[0,0] - 2 * m_i*s_i + n_cols * m_i * m_i
-        q_cache[i] = (m_i, s_i, i_variance)
-    if j in s_cache:
-        m_j, s_j, j_variance = s_cache[j]
+        root_variance_i = math.sqrt(row_i.dot(row_i.transpose())[0,0] - 2 * m_i*s_i + n_cols * m_i * m_i)
+        cache[i] = (m_i, s_i, root_variance_i)
+    if j in cache:
+        m_j, s_j, root_variance_j = cache[j]
     else:
         m_j = row_j.mean()
         s_j = row_j.sum()
-        j_variance = row_j.dot(row_j.transpose())[0,0] - 2 * m_j*s_j + n_cols * m_j * m_j
-        s_cache[j] = (m_j, s_j, j_variance)
+        root_variance_j = math.sqrt(row_j.dot(row_j.transpose())[0,0] - 2 * m_j*s_j + n_cols * m_j * m_j)
+        cache[j] = (m_j, s_j, root_variance_j)
 
     numerator = row_i.dot(row_j.transpose())[0,0] - m_i * s_j - m_j * s_i + n_cols * m_i * m_j
-    denominator = math.sqrt(i_variance * j_variance)
+    denominator = root_variance_i * root_variance_j
 
     correlation_coefficient = numerator / denominator
     return correlation_coefficient
@@ -157,10 +158,13 @@ def find_good_pairs(comparison_matrix):
     G = sp.vstack( (G, lower_padding) )
 
     # Now compute connected components
-    n_components, labeling = sp.csgraph.connected_components(G)
+    n_components, labeling = sp.csgraph.connected_components(G, directed=False)
     del G                       # ... and forget this large matrix
+    labeling = list(labeling[:n_rows])
+    n_components = len(collections.Counter(labeling))
     logging.info(f'Identified {n_components} groups of sequences to compute NC for')
-    for label, labeling in itertools.groupby(enumerate(labeling[:n_rows]), key=snd):
+
+    for label, labeling in itertools.groupby(enumerate(labeling), key=snd):
         component = map(fst, labeling) # extract indices for component
         for a, b in itertools.combinations(component, 2):
             yield a, b, label
@@ -174,12 +178,10 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
     good_pairs = find_good_pairs(comparison_matrix > threshold)
 
     logging.info('Starting NC computations')
-    q_cache = dict()          # Using a cache to avoid computing denominator factors more than once
-    s_cache = dict()
+    cache = dict()          # Using a cache to avoid computing denominator factors more than once
     for a, b, group in good_pairs:
-        cor = pearson_correlation(comparison_matrix, a, b, q_cache, s_cache)
+        cor = pearson_correlation(comparison_matrix, a, b, cache)
         yield id2accession[a], id2accession[b], cor, group
-            
             
 def nc_main():
     ap = argparse.ArgumentParser()
