@@ -31,10 +31,12 @@ def acc_dict_update(d, acc):
 #     ie, part of DB. We don't care, because only query IDs, which will be used
 #     as row IDs, will be used later. Column order does not matter.
 
-def read_blast_tab(file_handles):
+def read_blast_tab(file_handles, transform=None):
     '''
     Read the file containing standard Blast tabular results (from BLAST or DIAMOND)
     and return the needed data.
+
+    If transform is set, then the square root of bitscore is used.
 
     Returns:
       * A map (dict) ID to accession, for later presentation
@@ -46,22 +48,27 @@ def read_blast_tab(file_handles):
     s_accession2id = dict()       # ... more
     id2accession = dict()       # ... and back
     similar_pairs = dict()
+    singletons = list()
 
     for fh in file_handles:
         reader = csv.reader(fh, delimiter='\t')
         for row in reader:
             query_id, subject_id, bit_score = row[0], row[1], row[11]
-            id1 = acc_dict_update(q_accession2id, query_id)
-            id2 = acc_dict_update(s_accession2id, subject_id)
-            if query_id in ['PIENAPT00000013550', 'NP_001037207.1'] :
-                logging.info(id1)
-            id2accession[id1] = query_id
-            similar_pairs[(id1, id2)] = float(bit_score)
+            if subject_id == '*':
+                singletons.append(query_id)
+            else:
+                id1 = acc_dict_update(q_accession2id, query_id)
+                id2 = acc_dict_update(s_accession2id, subject_id)
+                id2accession[id1] = query_id
+                if transform:
+                    similar_pairs[(id1, id2)] = math.sqrt(float(bit_score))
+                else:
+                    similar_pairs[(id1, id2)] = float(bit_score)
 
-    return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1
+    return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1, singletons
 
 
-def read_blast_3col_format(file_handles):
+def read_blast_3col_format(file_handles, transform=None):
     '''
     Same is read_blast_tab, but for three-column data like NC_standalone input.
     '''
@@ -74,10 +81,15 @@ def read_blast_3col_format(file_handles):
         reader = csv.reader(fh, delimiter=' ')
         for row in reader:
             queryid, subject_id, bit_score = row
+            if transform:
+                bit_score = math.sqrt(bit_score)
             id1 = acc_dict_update(q_accession2id, queryid)
             id2 = acc_dict_update(s_accession2id, subject_id)
             id2accession[id1] = queryid
-            similar_pairs[(id1, id2)] = float(bit_score)
+            if transform:
+                similar_pairs[(id1, id2)] = math.sqrt(float(bit_score))
+            else:
+                similar_pairs[(id1, id2)] = float(bit_score)
 
     return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1
 
@@ -92,6 +104,7 @@ def scores_to_comparison_matrix(similar_pairs, nrows, ncols):
     logging.info(f'Preparing matrix with similarity data ({nrows} by {ncols}, but a sparse matrix)')
     row_indices, col_indices = zip(*similar_pairs.keys())
     comparisons = sp.csr_array((list(similar_pairs.values()), (row_indices, col_indices)), shape=(nrows, ncols), dtype=np.float32)
+    logging.info(f'There are {comparisons.getnnz()} (={100*comparisons.getnnz() / (nrows*ncols):.4}%) non-zero elements in the matrix')
     return comparisons
 
 
@@ -143,7 +156,24 @@ def snd(x):
     return x[1]
 
 
-def find_good_pairs(comparison_matrix):
+def find_good_pairs(similarities, threshold):
+    ref_hits = dict()
+    for (a, b), score in similarities.items():
+        if score >= threshold:
+            if b in ref_hits:
+                ref_hits[b].append(a)
+            else:
+                ref_hits[b] = [a]
+            
+    good_pairs = dict()
+    for target, queries in ref_hits.items():
+        for a, b in itertools.combinations(queries, 2):
+            if (a,b) not in good_pairs:
+                good_pairs[(a, b)] = True
+    return good_pairs
+
+
+def find_linked_pairs(comparison_matrix):
     '''We want to extract pairs of sequences that are either directly linked
     because the have reported similarity, or indirectly link through other
     similar sequences. In this latter case, it is assumed that the sequence
@@ -156,6 +186,9 @@ def find_good_pairs(comparison_matrix):
 
     Implemented using connected components in a graph, so basically
     linear time to compute.
+
+    I just realized that of two sequences are linked without having a
+    hit to a common reference sequence, then their NC will be 0.
     '''
     n_rows, n_cols = comparison_matrix.shape
     # Add an n_rows x n_rows block on the left
@@ -172,8 +205,12 @@ def find_good_pairs(comparison_matrix):
     labeling = labeling[:n_rows]
     n_components = len(collections.Counter(labeling))
     logging.info(f'Identified {n_components} groups of sequences to compute NC for')
-
-    for label, labeling in itertools.groupby(enumerate(labeling), key=snd):
+    
+    # Use enumerate to get indices of group labels
+    # Sort pairs based on group label
+    # Then use groupby to collect the indices with the same group label
+    groups = itertools.groupby(sorted(enumerate(labeling), key=snd), key=snd)
+    for label, labeling in groups:
         component = map(fst, labeling) # extract indices for component
         for a, b in itertools.combinations(component, 2):
             yield a, b, label
@@ -183,16 +220,18 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
     logging.info('Preparing NC data')
     comparison_matrix = scores_to_comparison_matrix(similar_pairs, n_queries, n_ref_seqs)
 
-    logging.info('Identifying sequence pairs to compute NC for.')
-    good_pairs = find_good_pairs(comparison_matrix > threshold)
+    good_pairs = find_good_pairs(similar_pairs, threshold)
+    logging.info(f'Identified {len(good_pairs)} sequence pairs to compute NC for.')
 
     logging.info('Starting NC computations')
     cache = dict()          # Using a cache to avoid computing denominator factors more than once
-    for a, b, group in good_pairs:
+    for a, b in good_pairs:
         cor = pearson_correlation(comparison_matrix, a, b, cache)
-        yield id2accession[a], id2accession[b], cor, group
+        yield id2accession[a], id2accession[b], cor
             
-def nc_main():
+
+
+def snc_argparser():
     ap = argparse.ArgumentParser()
     ap.add_argument('infile', nargs='+', type=argparse.FileType('r'),
                     default=sys.stdin,
@@ -203,11 +242,17 @@ def nc_main():
                     help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
     ap.add_argument('-3', '--three-col', action='store_true',
                     help='Actually, assume the input file has three columns (acc1, acc2, and bitscore) separated by single blankspace, like NC_standalone.')
+    ap.add_argument('-s', '--square-root', action='store_true',
+                    help='Transform bitscores with square root')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
                     help=f'NC reporting threshold. Calculated values below this threshold will not be reported. Default: {nc_thresh}')
     ap.add_argument('-v', '--verbose', action='store_true', 
                     help='Output some progress information')
+    return ap
 
+
+def nc_main():
+    ap = snc_argparser()
     args = ap.parse_args()
 
     if args.all_vs_all:
@@ -220,17 +265,25 @@ def nc_main():
         
 
     logging.info('Reading data')
+    singletons = None
     if not args.three_col:
-        id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_tab(args.infile) # Note: args.infile is a list of filehandles
+        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, args.square_root) # Note: args.infile is a list of filehandles
     else:
-        id2accession, similar_pairs, n_queries, n_ref_seqs = read_blast_3col_format(args.infile)
-            
-    if similar_pairs:
-        for acc1, acc2, nc, group in neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, args.consider):
-            if nc >= args.nc_thresh:
-                print(acc1, acc2, round(nc, 3), group)
+        id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, args.square_root)
 
-    logging.info('Done')
+    if singletons:
+        logging.info(f'Noted {len(singletons)} sequences without a hit in the reference data.')
+
+    if similarities:
+        counter = 0
+        for acc1, acc2, nc in neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, args.consider):
+            counter += 1
+            if counter % 10000 == 0:
+                logging.info(f'{counter} pairs analyzed')
+            if nc >= args.nc_thresh:
+                print(acc1, acc2, round(nc, 3))
+        logging.info(f'{counter} pairs analyzed')
+    logging.info(f'Done.')
 
 if __name__ == '__main__':
     nc_main()
