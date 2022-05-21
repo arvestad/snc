@@ -157,6 +157,15 @@ def snd(x):
 
 
 def find_good_pairs(similarities, threshold):
+    '''
+    Params:
+    * similarities: a dict mapping pairs of indices (a, b) to a bitscore
+    * threshold: minimum score to consider pair worth computing NC for
+
+    Returns:
+    * a dict of pairs as keys (values are just True) containing those
+      worth computing NC for, without duplicates.
+    '''
     ref_hits = dict()
     for (a, b), score in similarities.items():
         if score >= threshold:
@@ -266,17 +275,22 @@ def nc_main():
 
     logging.info('Reading data')
     singletons = None
-    if not args.three_col:
-        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, args.square_root) # Note: args.infile is a list of filehandles
-    else:
+    if args.three_col:
         id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, args.square_root)
+    else:
+        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, args.square_root) # Note: args.infile is a list of filehandles
 
     if singletons:
         logging.info(f'Noted {len(singletons)} sequences without a hit in the reference data.')
 
     if similarities:
         counter = 0
-        for acc1, acc2, nc in neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, args.consider):
+        if args.square_root:
+            consider = math.sqrt(args.consider)
+        else:
+            consider = args.consider
+            
+        for acc1, acc2, nc in neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, consider):
             counter += 1
             if counter % 10000 == 0:
                 logging.info(f'{counter} pairs analyzed')
