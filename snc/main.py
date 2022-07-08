@@ -22,6 +22,39 @@ def acc_dict_update(d, acc):
         return n
     
 
+# Score transforms
+#
+# Song et al reports the transform is important and their preference was
+# log(bitscore), and log(minvalue) when score was missing in the input (i.e.,
+# no similarity). The minvalue was chosen to reflect the size of the database,
+# which impacts bitscores. Using a minvalue also models the fact that no two
+# sequences have exactly zero similarity. That is currently ignored in this code.
+
+def sqrt_transform(sc):
+    '''
+    Straightforward square root.
+    '''
+    return math.sqrt(sc)
+
+def root_transform(sc, r):
+    '''
+    Any other root.
+    '''
+    return sc**(1.0 / r)
+
+def log10_transform(sc):
+    '''
+    Take the log10 of score plus one (to handle zeros nicely).
+    '''
+    return math.log(sc + 1, 10)
+
+def ln_transform(sc):
+    '''
+    Take the natural log of score plus one (to handle zeros nicely).
+    '''
+    return math.log(sc + 1)
+
+
 # Assumptions:
 #   * The query sequences are the ones we are interested in, and that we compute
 #     NC for.
@@ -61,7 +94,7 @@ def read_blast_tab(file_handles, transform=None):
                 id2 = acc_dict_update(s_accession2id, subject_id)
                 id2accession[id1] = query_id
                 if transform:
-                    similar_pairs[(id1, id2)] = math.sqrt(float(bit_score))
+                    similar_pairs[(id1, id2)] = transform(float(bit_score))
                 else:
                     similar_pairs[(id1, id2)] = float(bit_score)
 
@@ -82,12 +115,12 @@ def read_blast_3col_format(file_handles, transform=None):
         for row in reader:
             queryid, subject_id, bit_score = row
             if transform:
-                bit_score = math.sqrt(bit_score)
+                bit_score = transform(bit_score)
             id1 = acc_dict_update(q_accession2id, queryid)
             id2 = acc_dict_update(s_accession2id, subject_id)
             id2accession[id1] = queryid
             if transform:
-                similar_pairs[(id1, id2)] = math.sqrt(float(bit_score))
+                similar_pairs[(id1, id2)] = transform(float(bit_score))
             else:
                 similar_pairs[(id1, id2)] = float(bit_score)
 
@@ -117,8 +150,11 @@ def pearson_correlation(comparison_matrix, i, j, cache={}):
     $\sum_i (x_i - \bar x)(y_i - \bar y)$ can be written as a vector 
     computation: $xy^T - x (1^T \bar y) - (\bar x1) y + n\bar x\bar y$. Input vectors
     $x$ and $y$ are sparse, but $x - 1\bar x$ would not be sparse. However,
-    the multiplications in the vector computation are fast due to sparsity,
-    end the final sum are on scalars. 
+    the multiplications in the vector computation are fast (?) due to sparsity,
+    and the final sum are on scalars. 
+
+    To avoid recomputing some factors over and over, we put them in a cache supplied
+    as a parameter.
     '''
     row_i = comparison_matrix.getrow(i)
     row_j = comparison_matrix.getrow(j)
@@ -252,7 +288,9 @@ def snc_argparser():
     ap.add_argument('-3', '--three-col', action='store_true',
                     help='Actually, assume the input file has three columns (acc1, acc2, and bitscore) separated by single blankspace, like NC_standalone.')
     ap.add_argument('-s', '--square-root', action='store_true',
-                    help='Transform bitscores with square root')
+                    help='Transform bitscores with square root. (Deprecated, see -st.)')
+    ap.add_argument('-st', '--score-transform', default=None, choices=['sqrt', 'cubicroot', '2.5root', 'log10', 'ln'],
+                    help='Transform the input bitscores with one of the given functions (see doc in code!)')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
                     help=f'NC reporting threshold. Calculated values below this threshold will not be reported. Default: {nc_thresh}')
     ap.add_argument('-v', '--verbose', action='store_true', 
@@ -272,21 +310,35 @@ def nc_main():
     else:
         logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         
-
+    transform=None
+    if args.square_root:
+        transform = square_root
+    if args.score_transform:
+        if args.score_transform == 'sqrt':
+            transform = sqrt_transform
+        elif args.score_transform == 'cubicroot':
+            transform = lambda sc: root_transform(sc, 3.0)
+        elif args.score_transform == '2.5root':
+            transform = lambda sc: root_transform(sc, 2.5)
+        elif args.score_transform == 'log10':
+            transform = log10_transform
+        elif args.score_transform == 'ln':
+            transform = ln_transform
+            
     logging.info('Reading data')
     singletons = None
     if args.three_col:
-        id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, args.square_root)
+        id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, transform)
     else:
-        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, args.square_root) # Note: args.infile is a list of filehandles
+        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, transform) # Note: args.infile is a list of filehandles
 
     if singletons:
         logging.info(f'Noted {len(singletons)} sequences without a hit in the reference data.')
 
     if similarities:
         counter = 0
-        if args.square_root:
-            consider = math.sqrt(args.consider)
+        if transform:
+            consider =transform(args.consider)
         else:
             consider = args.consider
             
