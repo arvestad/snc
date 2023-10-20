@@ -69,7 +69,7 @@ def read_blast_tab(file_handles, transform=None):
     Read the file containing standard Blast tabular results (from BLAST or DIAMOND)
     and return the needed data.
 
-    If transform is set, then the square root of bitscore is used.
+    If transform is set, then it is applied to the bitscore.
 
     Returns:
       * A map (dict) ID to accession, for later presentation
@@ -280,17 +280,15 @@ def snc_argparser():
     ap = argparse.ArgumentParser()
     ap.add_argument('infile', nargs='+', type=argparse.FileType('r'),
                     default=sys.stdin,
-                    help='The infile is the path to a file containing BLAST or DIAMOND output in tabular format (using --outfmt 6 in both tools)')
-    ap.add_argument('-a', '--all-vs-all', action='store_true',
-                    help='If your comparisons are all-versus-all. Otherwise it is assumed that the sequences you are interested in have been compared with reference database.')
+                    help='The infile is the path to a file containing BLAST or DIAMOND output in tabular format (using --outfmt 6 in both tools). Note that you can use several infiles in one go.')
+#    ap.add_argument('-a', '--all-vs-all', action='store_true',
+#                    help='If your comparisons are all-versus-all. Otherwise it is assumed that the sequences you are interested in have been compared with reference database.')
     ap.add_argument('-c', '--consider', type=float, metavar='TRESHOLD', default=consideration_threshold,
                     help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
     ap.add_argument('-3', '--three-col', action='store_true',
                     help='Actually, assume the input file has three columns (acc1, acc2, and bitscore) separated by single blankspace, like NC_standalone.')
-    ap.add_argument('-s', '--square-root', action='store_true',
-                    help='Transform bitscores with square root. (Deprecated, see -st.)')
     ap.add_argument('-st', '--score-transform', default=None, choices=['sqrt', 'cubicroot', '2.5root', 'log10', 'ln'],
-                    help='Transform the input bitscores with one of the given functions (see doc in code!)')
+                    help='Transform the input bitscores with one of the given functions. The two logarithmic transforms are actually on the bitscore + 1, to avoid issues around zero.')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
                     help=f'NC reporting threshold. Calculated values below this threshold will not be reported. Default: {nc_thresh}')
     ap.add_argument('-v', '--verbose', action='store_true', 
@@ -302,8 +300,9 @@ def nc_main():
     ap = snc_argparser()
     args = ap.parse_args()
 
-    if args.all_vs_all:
-        sys.exit('Not implemented yet. Requires a symmetric scoring matrix. Currently, comparisonmatrix[i][i] refers to "query i" and "subject i", which is not the same sequence.')
+# Prepared feature. 
+#    if args.all_vs_all:
+#        sys.exit('Not implemented yet. Requires a symmetric scoring matrix. Currently, comparisonmatrix[i][i] refers to "query i" and "subject i", which is not the same sequence.')
 
     if args.verbose:
         logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S', level=logging.INFO)
@@ -311,8 +310,6 @@ def nc_main():
         logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         
     transform=None
-    if args.square_root:
-        transform = square_root
     if args.score_transform:
         if args.score_transform == 'sqrt':
             transform = sqrt_transform
