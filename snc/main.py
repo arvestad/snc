@@ -114,8 +114,6 @@ def read_blast_3col_format(file_handles, transform=None):
         reader = csv.reader(fh, delimiter=' ')
         for row in reader:
             queryid, subject_id, bit_score = row
-            if transform:
-                bit_score = transform(bit_score)
             id1 = acc_dict_update(q_accession2id, queryid)
             id2 = acc_dict_update(s_accession2id, subject_id)
             id2accession[id1] = queryid
