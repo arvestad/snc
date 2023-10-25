@@ -1,7 +1,7 @@
 # SNC
 
 An attempt at understanding and developing Dannie Durand's Neighborhood Correlation method
-for sequence comparisons.
+(see references below) for sequence comparisons.
 
 There are several ideas tested here. 
 
@@ -16,6 +16,11 @@ There are several ideas tested here.
 3. `NC_standalone` used a log-transform on E values instead of bitscores. The transform gave
    improved results. We are trying several other transforms, including log-transform on "bitscore +
    1" to avoid complications when the score/E value is close to zero.
+   
+The code for `snc` is way easier to understand and modify than the code for `NC_standalone` (well, I
+am biased), but `snc` is also far slower.
+
+
 
 ## Install
 
@@ -41,3 +46,9 @@ Notice the options!
 * `-a`: Don't bother, it is not implemented yet. The idea was to mimic NC_standalone with this option, but the NC statistics 
   has not been adapted to that option.
 * `-t`: This threshold is purely on output, so can be used as a means of reducing output space.
+
+
+## References
+
+* JM Joseph and D Durand, _Family classification without domain chaining_, Bioinformatics, 2009.
+* N Song, R Sedgewick, D Duranda, _Domain architecture comparison for multidomain homology identification_, J Comp Biol, 2007.
