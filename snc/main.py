@@ -199,6 +199,10 @@ def find_good_pairs(similarities, threshold):
     Returns:
     * a dict of pairs as keys (values are just True) containing those
       worth computing NC for, without duplicates.
+
+    It is assumed that a is in Q, a set of query sequences, and b is in
+    R, our set of reference sequences, and all sequences from Q have been
+    compared to R. 
     '''
     ref_hits = dict()
     for (a, b), score in similarities.items():
