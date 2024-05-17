@@ -86,7 +86,13 @@ def read_blast_tab(file_handles, transform=None):
     for file_num, fh in enumerate(file_handles):
         reader = csv.reader(fh, delimiter='\t')
         for row in reader:
-            query_id, subject_id, bit_score = row[0], row[1], row[11]
+            try:
+                query_id, subject_id, bit_score = row[0], row[1], row[11]
+            except Exception as e:
+                logging.critical(f'Could not parse input from file "{fh.name}".', e)
+                sys.exit(1)
+                
+
             if subject_id == '*':
                 singletons.append(query_id)
             else:
@@ -111,9 +117,13 @@ def read_blast_3col_format(file_handles, transform=None):
     similar_pairs = dict()
 
     for file_num, fh in enumerate(file_handles):
-        reader = csv.reader(fh, delimiter=' ')
-        for row in reader:
-            queryid, subject_id, bit_score = row
+        for line_no, row in enumerate(fh):
+            try:
+                queryid, subject_id, bit_score = row.split()
+            except Exception as e:
+                logging.critical(f'Could not parse 3-column input from line {line_no} in file "{fh.name}". Contents: "{row}". Error: {str(e)}')
+                sys.exit(1)
+                
             id1 = acc_dict_update(q_accession2id, queryid)
             id2 = acc_dict_update(s_accession2id, subject_id)
             id2accession[id1] = queryid
@@ -341,16 +351,9 @@ def nc_main():
     logging.info('Reading data')
     singletons = None
     if args.three_col:
-        try:
-            id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, transform)
-        except Exception as e:
-            logging.critical(f'Could not parse 3-column input from file "{args.infile}".', e)
+        id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, transform)
     else:
-        try:
-            id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, transform) # Note: args.infile is a list of filehandles
-        except Exception as e:
-            logging.critical(f'Could not parse input from file "{args.infile}".', e)
-
+        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, transform) # Note: args.infile is a list of filehandles
 
     if singletons:
         logging.info(f'Noted {len(singletons)} sequences without a hit in the reference data.')
