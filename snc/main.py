@@ -341,9 +341,16 @@ def nc_main():
     logging.info('Reading data')
     singletons = None
     if args.three_col:
-        id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, transform)
+        try:
+            id2accession, similarities, n_queries, n_ref_seqs = read_blast_3col_format(args.infile, transform)
+        except Exception as e:
+            logging.critical(f'Could not parse 3-column input from file "{args.infile}".', e)
     else:
-        id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, transform) # Note: args.infile is a list of filehandles
+        try:
+            id2accession, similarities, n_queries, n_ref_seqs, singletons = read_blast_tab(args.infile, transform) # Note: args.infile is a list of filehandles
+        except Exception as e:
+            logging.critical(f'Could not parse input from file "{args.infile}".', e)
+
 
     if singletons:
         logging.info(f'Noted {len(singletons)} sequences without a hit in the reference data.')
