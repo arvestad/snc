@@ -5,10 +5,7 @@ An attempt at understanding and developing Dannie Durand's Neighborhood Correlat
 
 There are several ideas tested here. 
 
-1. Sparse matrices, from SciPy, are used for storing similarity scores. Since most comparisons do
-   not have interesting similarity, we assume there are many zeros in a similarity matrix. This is
-   deviating from an approach in the original Neighborhood Correlation papers of using as many
-   pairwise scores as possible, including statistically insignificant scores, as input.
+1. A pure Python approach, making use of SciPy and numpy for main computations.
 2. We are not assuming all-against-all comparisons. Rather, the input sequences we are interestedin,
    call them Q, are assumed to be compared to a reference database R, which may or may not overlap
    with Q. In fact, you can have R=Q, but we want to enable the use of a recurrently used reference
