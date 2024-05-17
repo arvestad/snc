@@ -83,7 +83,7 @@ def read_blast_tab(file_handles, transform=None):
     similar_pairs = dict()
     singletons = list()
 
-    for fh in file_handles:
+    for file_num, fh in enumerate(file_handles):
         reader = csv.reader(fh, delimiter='\t')
         for row in reader:
             query_id, subject_id, bit_score = row[0], row[1], row[11]
@@ -94,9 +94,9 @@ def read_blast_tab(file_handles, transform=None):
                 id2 = acc_dict_update(s_accession2id, subject_id)
                 id2accession[id1] = query_id
                 if transform:
-                    similar_pairs[(id1, id2)] = transform(float(bit_score))
+                    similar_pairs[((id1, file_num), id2)] = transform(float(bit_score))
                 else:
-                    similar_pairs[(id1, id2)] = float(bit_score)
+                    similar_pairs[((id1, file_num), id2)] = float(bit_score)
 
     return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1, singletons
 
@@ -110,7 +110,7 @@ def read_blast_3col_format(file_handles, transform=None):
     id2accession = dict()         # ... and back
     similar_pairs = dict()
 
-    for fh in file_handles:
+    for file_num, fh in enumerate(file_handles):
         reader = csv.reader(fh, delimiter=' ')
         for row in reader:
             queryid, subject_id, bit_score = row
@@ -118,22 +118,23 @@ def read_blast_3col_format(file_handles, transform=None):
             id2 = acc_dict_update(s_accession2id, subject_id)
             id2accession[id1] = queryid
             if transform:
-                similar_pairs[(id1, id2)] = transform(float(bit_score))
+                similar_pairs[((id1, file_num), id2)] = transform(float(bit_score))
             else:
-                similar_pairs[(id1, id2)] = float(bit_score)
+                similar_pairs[((id1, file_num), id2)] = float(bit_score)
 
     return id2accession, similar_pairs, max(q_accession2id.values()) + 1, max(s_accession2id.values()) + 1
 
 
 def scores_to_comparison_matrix(similar_pairs, nrows, ncols):
     '''
-    Given a list of triples (idx1, idx2, bitscore), return 
+    Given a list of triples ((idx1, file_num), idx2, bitscore), return 
     a sparse matrix containing the same information. The indices are integers pointing to the
     rows and columns where the score should be put. The nrows and ncols variables are
     needed to avoid computing maximum indices. 
     '''
     logging.info(f'Preparing matrix with similarity data ({nrows} by {ncols}, but a sparse matrix)')
     row_indices, col_indices = zip(*similar_pairs.keys())
+    row_indices = list(map(fst, row_indices)) # Strip away the file_num to only retain row indices
     comparisons = sp.csr_array((list(similar_pairs.values()), (row_indices, col_indices)), shape=(nrows, ncols), dtype=np.float32)
     logging.info(f'There are {comparisons.getnnz()} (={100*comparisons.getnnz() / (nrows*ncols):.4}%) non-zero elements in the matrix')
     return comparisons
@@ -145,9 +146,9 @@ def pearson_correlation(comparison_matrix, i, j, cache={}):
     There are convenient functions for this in SciPy and elsewhere, 
     but it seems as if I have to roll my own for rows of sparse matrices.
 
-    $\sum_i (x_i - \bar x)(y_i - \bar y)$ can be written as a vector 
-    computation: $xy^T - x (1^T \bar y) - (\bar x1) y + n\bar x\bar y$. Input vectors
-    $x$ and $y$ are sparse, but $x - 1\bar x$ would not be sparse. However,
+    $\\sum_i (x_i - \\bar x)(y_i - \\bar y)$ can be written as a vector 
+    computation: $xy^T - x (1^T \\bar y) - (\\bar x1) y + n\\bar x\\bar y$. Input vectors
+    $x$ and $y$ are sparse, but $x - 1\\bar x$ would not be sparse. However,
     the multiplications in the vector computation are fast (?) due to sparsity,
     and the final sum are on scalars. 
 
@@ -190,11 +191,12 @@ def snd(x):
     return x[1]
 
 
-def find_good_pairs(similarities, threshold):
+def find_good_pairs(similarities, threshold, xross):
     '''
     Params:
-    * similarities: a dict mapping pairs of indices (a, b) to a bitscore
-    * threshold: minimum score to consider pair worth computing NC for
+    * similarities: a dict mapping pairs of indices (a, b) to a bitscore.
+    * threshold: minimum score to consider pair worth computing NC for.
+    * xross: If True, do not suggest pairs from the same input file.
 
     Returns:
     * a dict of pairs as keys (values are just True) containing those
@@ -205,17 +207,19 @@ def find_good_pairs(similarities, threshold):
     compared to R. 
     '''
     ref_hits = dict()
-    for (a, b), score in similarities.items():
+    for ((a, file_num), b), score in similarities.items():
         if score >= threshold:
             if b in ref_hits:
-                ref_hits[b].append(a)
+                ref_hits[b].append( (a, file_num) )
             else:
-                ref_hits[b] = [a]
+                ref_hits[b] = [(a, file_num)]
             
     good_pairs = dict()
     for target, queries in ref_hits.items():
-        for a, b in itertools.combinations(queries, 2):
-            if (a,b) not in good_pairs:
+        for (a, file_num_a), (b, file_num_b) in itertools.combinations(queries, 2):
+            if xross and file_num_a == file_num_b:
+                continue
+            elif (a,b) not in good_pairs:
                 good_pairs[(a, b)] = True
     return good_pairs
 
@@ -263,12 +267,18 @@ def find_linked_pairs(comparison_matrix):
             yield a, b, label
 
 
-def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, threshold=0):
+def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, threshold=0, xross=False):
+    '''
+    Compute NC scores for pairs of sequences from `similar_pairs`.
+
+    `threshold` - Do not report pairs for NC scores below this threshold.
+    `xross`     - If True, constrain to sequences from different input files.
+    '''
+    good_pairs = find_good_pairs(similar_pairs, threshold, xross)
+    logging.info(f'Identified {len(good_pairs)} sequence pairs to compute NC for.')
+
     logging.info('Preparing NC data')
     comparison_matrix = scores_to_comparison_matrix(similar_pairs, n_queries, n_ref_seqs)
-
-    good_pairs = find_good_pairs(similar_pairs, threshold)
-    logging.info(f'Identified {len(good_pairs)} sequence pairs to compute NC for.')
 
     logging.info('Starting NC computations')
     cache = dict()          # Using a cache to avoid computing denominator factors more than once
@@ -283,24 +293,28 @@ def snc_argparser():
     ap.add_argument('infile', nargs='+', type=argparse.FileType('r'),
                     default=sys.stdin,
                     help='The infile is the path to a file containing BLAST or DIAMOND output in tabular format (using --outfmt 6 in both tools). Note that you can use several infiles in one go.')
-#    ap.add_argument('-a', '--all-vs-all', action='store_true',
-#                    help='If your comparisons are all-versus-all. Otherwise it is assumed that the sequences you are interested in have been compared with reference database.')
-    ap.add_argument('-c', '--consider', type=float, metavar='TRESHOLD', default=consideration_threshold,
-                    help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
     ap.add_argument('-3', '--three-col', action='store_true',
                     help='Actually, assume the input file has three columns (acc1, acc2, and bitscore) separated by single blankspace, like NC_standalone.')
+    ap.add_argument('-c', '--consider', type=float, metavar='TRESHOLD', default=consideration_threshold,
+                    help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
     ap.add_argument('-st', '--score-transform', default=None, choices=['sqrt', 'cubicroot', '2.5root', 'log10', 'ln'],
                     help='Transform the input bitscores with one of the given functions. The two logarithmic transforms are actually on the bitscore + 1, to avoid issues around zero.')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
                     help=f'NC reporting threshold. Calculated values below this threshold will not be reported. Default: {nc_thresh}')
     ap.add_argument('-v', '--verbose', action='store_true', 
                     help='Output some progress information')
+    ap.add_argument('-x', '--xross-files', action='store_true', default=False,
+                    help='Only consider pairs of sequences from different files')
+
     return ap
 
 
 def nc_main():
     ap = snc_argparser()
     args = ap.parse_args()
+    if args.xross_files and len(args.infile) < 2:
+        logging.critical('The --xross-files option requires at least two input files.')
+        sys.exit(1)
 
 # Prepared feature. 
 #    if args.all_vs_all:
@@ -341,7 +355,7 @@ def nc_main():
         else:
             consider = args.consider
             
-        for acc1, acc2, nc in neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, consider):
+        for acc1, acc2, nc in neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, consider, args.xross_files):
             counter += 1
             if counter % 10000 == 0:
                 logging.info(f'{counter} pairs analyzed')
