@@ -15,4 +15,4 @@ numpy = "^1.20.3"
 
 [project.scripts]
 snc = "snc:nc_main"
-
+rbh = "snc.rbh:rbh_main"
