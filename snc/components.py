@@ -113,7 +113,7 @@ def create_fasta_cluster_files(components, seqfile, prefix, sz_threshold):
                 print(record.seq, file=h)
 
 
-def main():
+def components_main():
     ap = create_arg_parser()
     args = ap.parse_args()
 
