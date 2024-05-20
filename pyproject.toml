@@ -12,6 +12,7 @@ requires-python = ">=3.6"
 [dependencies]
 scipy = "^1.8.0"
 numpy = "^1.20.3"
+biopython = "^1.8"
 
 [project.scripts]
 snc = "snc:nc_main"
