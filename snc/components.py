@@ -15,6 +15,8 @@ def create_arg_parser():
                     help='Discard components smaller (<) than this. This does not affect the --info or --count options. Default: %(default)s')
     ap.add_argument('-i', '--info', action='store_true',
                     help='Output information about the input to stderr')
+    ap.add_argument('-j', '--json', metavar='FILENAME',
+                    help='Save information and clusters (accessions only) in the named JSON file.')
     ap.add_argument('-p', '--prefix', default='c',
                     help='If using -s, use this string as a prefix for the output file names. Default is "c".')
     ap.add_argument('-s', '--seqfile', type=argparse.FileType('r'),
@@ -24,34 +26,44 @@ def create_arg_parser():
     return ap
 
 
-def print_component_stats(components, discard_size):
+def get_component_stats(components, discard_size):
+    stats = {}
     sizes = list(map(len, components))
-    n_singletons=sum(map(lambda n: n==1, sizes))
-    median = statistics.median(sizes)
-    largest = max(sizes)
-    n_components = len(components)
+    stats['n_singletons'] = sum(map(lambda n: n==1, sizes))
+    stats['median'] = statistics.median(sizes)
+    stats['largest'] = max(sizes)
+    try:
+        quantiles = statistics.quantiles(sizes)
+    except statistics.StatisticsError:
+        quantiles = 'N/A'
+    stats['quantiles'] = quantiles
+
+    stats['n_components'] = len(components)
+    stats['large_enough'] = len(list(filter(lambda sz: sz>= discard_size, sizes)))
+    stats['sizes'] = sizes
+    return stats
+    
+
+def print_component_stats(components, discard_size):
+    stats = get_component_stats(components, discard_size)
 
     print('\n# Component statistics', file=sys.stderr)
-    print(f'Number of components: {n_components}', file=sys.stderr)
-    print(f'Number of singletons: {n_singletons}', file=sys.stderr)
-    print(f'Median component size: {median}', file=sys.stderr)
-    print(f'Largest component size: {largest}', file=sys.stderr)
-    try:
-        quartiles = statistics.quantiles(sizes)
-        print(f'Quartiles at: {quartiles}', file=sys.stderr)
-    except statistics.StatisticsError:
-        print(f'Could not compute quantiles of cluster sizes.', file=sys.stderr)
+    print(f'Number of components: {stats["n_components"]}', file=sys.stderr)
+    print(f'Number of singletons: {stats["n_singletons"]}', file=sys.stderr)
+    print(f'Median component size: {stats["median"]}', file=sys.stderr)
+    print(f'Largest component size: {stats["largest"]}', file=sys.stderr)
+    print(f'Quantiles at: {stats["quantiles"]}', file=sys.stderr)
 
-    sizes = list(filter(lambda sz: sz >= discard_size, sizes))
-    print('\n# After discarding small components', file=sys.stderr)
-    median = statistics.median(sizes)
-    largest = max(sizes)
-    n_components = len(sizes)
-    print(f'Number of components: {n_components}', file=sys.stderr)
-    print(f'Median component size: {median}', file=sys.stderr)
-    print(f'Largest component size: {largest}', file=sys.stderr)
-    quartiles = statistics.quantiles(sizes)
-    print(f'Quartiles at: {quartiles}', file=sys.stderr)
+
+def make_json_file(filename, components, n_edges, n_non_edges, n_nodes, discard_size):
+    stats = get_component_stats(components, discard_size)
+    stats['n_edges'] = n_edges,
+    stats['n_non_edges'] = n_non_edges,
+    stats['n_nodes'] = n_nodes,
+    stats['components'] = components,
+
+    with open(filename, 'w') as jh:
+        json.dump(stats, jh, indent=4)
     
 
 def make_graph(infilename, threshold=0):
@@ -84,6 +96,20 @@ def print_components(components, sz_threshold):
             print(' '.join(component))
 
 
+def accession_lookup(table, acc_string):
+    '''
+    The accession string can contain several accessions, like
+    "tr|G3XF63|G3XF63_9SPER", and we want to try all of them
+    in the lookup.
+    '''
+    for acc in acc_string.split('|'):
+        if acc in table:
+            return table[acc]
+
+    # accession not found in table
+    return None
+
+
 def create_fasta_cluster_files(components, seqfile, prefix, sz_threshold):
     '''
     Create a Fasta file for each component. The function is slow, because
@@ -106,14 +132,15 @@ def create_fasta_cluster_files(components, seqfile, prefix, sz_threshold):
 
     # Then go through all sequences and append them to the right cluster
     for record in SeqIO.parse(seqfile, 'fasta'):
-        if record.id not in cluster_dict:
-            # print(f'Missing {record.id}', file=sys.stderr)
-            continue
-        else:
-            clusterfile = cluster_dict[record.id]
+        clusterfile = accession_lookup(cluster_dict, record.id)
+        if clusterfile:
             with open(clusterfile, 'a') as h:
                 print(f'>{record.id} {record.description}', file=h)
                 print(record.seq, file=h)
+        else:
+            # This record was not among the clusters
+            # print(f'Missing {record.id}', file=sys.stderr)
+            continue
 
 
 def components_main():
@@ -131,6 +158,12 @@ def components_main():
     components = list(nx.connected_components(graph))
     if args.info:
         print_component_stats(components, args.discard_size)
+
+    if args.json:
+        try:
+            make_json_file(args.json, components, args.discard_size)
+        except Exception as e:
+            print(f'Error saving JSON data to "{args.json}": {str(e)}', file=sys.stderr)
 
     if args.count:
         print(len(list(components)))
