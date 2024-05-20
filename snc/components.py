@@ -36,8 +36,11 @@ def print_component_stats(components, discard_size):
     print(f'Number of singletons: {n_singletons}', file=sys.stderr)
     print(f'Median component size: {median}', file=sys.stderr)
     print(f'Largest component size: {largest}', file=sys.stderr)
-    quartiles = statistics.quantiles(sizes)
-    print(f'Quartiles at: {quartiles}', file=sys.stderr)
+    try:
+        quartiles = statistics.quantiles(sizes)
+        print(f'Quartiles at: {quartiles}', file=sys.stderr)
+    except statistics.StatisticsError:
+        print(f'Could not compute quantiles of cluster sizes.', file=sys.stderr)
 
     sizes = list(filter(lambda sz: sz >= discard_size, sizes))
     print('\n# After discarding small components', file=sys.stderr)
