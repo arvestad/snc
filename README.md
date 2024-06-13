@@ -47,4 +47,4 @@ Notice the options!
 ## References
 
 * JM Joseph and D Durand, _Family classification without domain chaining_, Bioinformatics, 2009.
-* N Song, R Sedgewick, D Duranda, _Domain architecture comparison for multidomain homology identification_, J Comp Biol, 2007.
+* N Song, R Sedgewick, D Durand, _Domain architecture comparison for multidomain homology identification_, J Comp Biol, 2007.
