@@ -35,13 +35,19 @@ using the option `--outfmt 6`.
 
 Notice the options!
 
+* `-3`: Three-column input. Default is BLAST's m8 format.
 * `-c x`: set the "consideration threshold" to _x_. If two seqeuences _a_ and _b_ both have a
   similarity score _x_ or higher to a sequence _r_, then NC will be calculated for _a_ and _b_. This
   has a big effect on runtime! Default is set to 30, expecting bitscores to be used. That is a low
   threshold, in my opinion, but I have not benchmarked this at all.
+* `-ci`: Compute and output a confidence interval for your NC scores. This is only meaningful on
+  smaller datasets, because on proteome-scale computations the NC score is relatively well
+  estimated. The methodological differences with NC_standalone cause larger differences than the
+  data uncertainty, it seems.
 * `-a`: Don't bother, it is not implemented yet. The idea was to mimic NC_standalone with this option, but the NC statistics 
   has not been adapted to that option.
 * `-t`: This threshold is purely on output, so can be used as a means of reducing output space.
+* `-v`: Output some progress information.
 
 
 ## References
