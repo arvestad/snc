@@ -188,6 +188,9 @@ def pearson_correlation(comparison_matrix, i, j, cache={}):
     denominator = root_variance_i * root_variance_j
 
     correlation_coefficient = numerator / denominator
+    if correlation_coefficient > 1.0:     # Numerical problems occur and cause later problems
+        correlation_coefficient = 0.99999 # Setting to 1.0 is too good.
+
     confidence_interval = calculate_confidence_interval(n_cols, correlation_coefficient)
     return correlation_coefficient, confidence_interval
 
@@ -204,7 +207,9 @@ def calculate_confidence_interval(n, correlation_coeff, percentile_point=1.96):
     # I follow the tutorial at Statology as a "scaffold" for my code:
     #    https://www.statology.org/confidence-interval-correlation-coefficient/
     
-    z_r = 0.5 * math.log((1.0 + correlation_coeff) / (1.0 - correlation_coeff))
+    assert correlation_coeff < 1.0, f'calculate_confidence_interval: Input correlation was {correlation_coeff=}'
+
+    z_r = math.atanh(correlation_coeff) # Fisher's transformation
     gaussian_bound = percentile_point / math.sqrt(n - 3)
     L = z_r - gaussian_bound
     U = z_r + gaussian_bound
@@ -279,7 +284,7 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
 
 
 def snc_argparser():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description='snc is a program for computing domain-aware protein-sequence similarity using Neighborhood Correlation score. This is a clone of NC_standalone from Dannie Durand\'s group, with added experimental features. See https://github.com/arvestad/snc for details. The input is a file with pairwise bitscores, and default output has three columns: acc1, acc2, and NC score.')
     ap.add_argument('infile', nargs='+', type=argparse.FileType('r'),
                     default=sys.stdin,
                     help='The infile is the path to a file containing BLAST or DIAMOND output in tabular format (using --outfmt 6 in both tools). Note that you can use several infiles in one go.')
@@ -288,7 +293,7 @@ def snc_argparser():
     ap.add_argument('-c', '--consider', type=float, metavar='TRESHOLD', default=consideration_threshold,
                     help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')
     ap.add_argument('-ci', '--confidence-interval', action='store_true',
-                    help='Output two columns for a 95% confidence interval of NC scores.')
+                    help='Output two columns (lower, upper) for a 95%% confidence interval of NC scores.')
     ap.add_argument('-st', '--score-transform', default=None, choices=['sqrt', 'cubicroot', '2.5root', 'log10', 'ln'],
                     help='Transform the input bitscores with one of the given functions. The two logarithmic transforms are actually on the bitscore + 1, to avoid issues around zero.')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
@@ -351,7 +356,7 @@ def nc_main():
             if nc >= args.nc_thresh:
                 # No point having more precision than 3 digits
                 if args.confidence_interval:
-                    upper, lower = confidence_interval
+                    lower, upper = confidence_interval
                     print(f'{acc1}\t{acc2}\t{nc:.3}\t{lower:.3}\t{upper:.3}')
                 else:
                     print(f'{acc1}\t{acc2}\t{nc:.3}')
