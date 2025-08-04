@@ -188,7 +188,30 @@ def pearson_correlation(comparison_matrix, i, j, cache={}):
     denominator = root_variance_i * root_variance_j
 
     correlation_coefficient = numerator / denominator
-    return correlation_coefficient
+    confidence_interval = calculate_confidence_interval(n_cols, correlation_coefficient)
+    return correlation_coefficient, confidence_interval
+
+
+def calculate_confidence_interval(n, correlation_coeff, percentile_point=1.96):
+    '''
+    Estimate a confidence interval for the given correlation_coefficient.
+
+    n : The number of samples
+    correlation_coefficient : Pearson correlation coefficient
+    percentile_point: The threshold on the normal distribution that you desire
+        for a certain percentile. At 95% level of confidence this is 1.96 (the default).
+    '''
+    # I follow the tutorial at Statology as a "scaffold" for my code:
+    #    https://www.statology.org/confidence-interval-correlation-coefficient/
+    
+    z_r = 0.5 * math.log((1.0 + correlation_coeff) / (1.0 - correlation_coeff))
+    gaussian_bound = percentile_point / math.sqrt(n - 3)
+    L = z_r - gaussian_bound
+    U = z_r + gaussian_bound
+
+    lower = (math.exp(2*L) - 1) / (math.exp(2*L) + 1)
+    upper = (math.exp(2*U) - 1) / (math.exp(2*U) + 1)
+    return lower, upper
     
 
 def fst(x):
@@ -234,49 +257,6 @@ def find_good_pairs(similarities, threshold, xross):
     return good_pairs
 
 
-def find_linked_pairs(comparison_matrix):
-    '''We want to extract pairs of sequences that are either directly linked
-    because the have reported similarity, or indirectly link through other
-    similar sequences. In this latter case, it is assumed that the sequence
-    similarity is so low that BLAST missed it, for example, but similarity
-    should still be investigated.
-
-    Returns an iterator with triples (idx1, idx2, grouplabel). The idx elements
-    are row indices into the comparison matrix, and grouplabel is an integer
-    indicating the subset the indexed sequences belong to.
-
-    Implemented using connected components in a graph, so basically
-    linear time to compute.
-
-    I just realized that of two sequences are linked without having a
-    hit to a common reference sequence, then their NC will be 0.
-    '''
-    n_rows, n_cols = comparison_matrix.shape
-    # Add an n_rows x n_rows block on the left
-    left_padding = sp.csr_array((n_rows, n_rows))
-    G = sp.hstack( (left_padding, comparison_matrix) )
-    
-    # We need a square matrix, so will add some zeros as padding.
-    lower_padding = sp.csr_array((n_cols, n_rows+n_cols))
-    G = sp.vstack( (G, lower_padding) )
-
-    # Now compute connected components
-    n_components, labeling = sp.csgraph.connected_components(G, directed=False)
-    del G                       # ... and forget this large matrix
-    labeling = labeling[:n_rows]
-    n_components = len(collections.Counter(labeling))
-    logging.info(f'Identified {n_components} groups of sequences to compute NC for')
-    
-    # Use enumerate to get indices of group labels
-    # Sort pairs based on group label
-    # Then use groupby to collect the indices with the same group label
-    groups = itertools.groupby(sorted(enumerate(labeling), key=snd), key=snd)
-    for label, labeling in groups:
-        component = map(fst, labeling) # extract indices for component
-        for a, b in itertools.combinations(component, 2):
-            yield a, b, label
-
-
 def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs, threshold=0, xross=False):
     '''
     Compute NC scores for pairs of sequences from `similar_pairs`.
@@ -293,8 +273,8 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
     logging.info('Starting NC computations')
     cache = dict()          # Using a cache to avoid computing denominator factors more than once
     for a, b in good_pairs:
-        cor = pearson_correlation(comparison_matrix, a, b, cache)
-        yield id2accession[a], id2accession[b], cor
+        cor, confidence_interval = pearson_correlation(comparison_matrix, a, b, cache)
+        yield id2accession[a], id2accession[b], cor, confidence_interval
             
 
 
@@ -306,7 +286,9 @@ def snc_argparser():
     ap.add_argument('-3', '--three-col', action='store_true',
                     help='Actually, assume the input file has three columns (acc1, acc2, and bitscore) separated by single blankspace, like NC_standalone.')
     ap.add_argument('-c', '--consider', type=float, metavar='TRESHOLD', default=consideration_threshold,
-                    help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')    
+                    help=f'Consideration threshold. Only consider pairs of sequences linked by similarities (maybe in several steps) with this bitscores or higher. (Default:{consideration_threshold})')
+    ap.add_argument('-ci', '--confidence-interval', action='store_true',
+                    help='Output two columns for a 95% confidence interval of NC scores.')
     ap.add_argument('-st', '--score-transform', default=None, choices=['sqrt', 'cubicroot', '2.5root', 'log10', 'ln'],
                     help='Transform the input bitscores with one of the given functions. The two logarithmic transforms are actually on the bitscore + 1, to avoid issues around zero.')
     ap.add_argument('-t', '--nc-thresh', type=float, default=nc_thresh,
@@ -325,10 +307,6 @@ def nc_main():
     if args.xross_files and len(args.infile) < 2:
         logging.critical('The --xross-files option requires at least two input files.')
         sys.exit(1)
-
-# Prepared feature. 
-#    if args.all_vs_all:
-#        sys.exit('Not implemented yet. Requires a symmetric scoring matrix. Currently, comparisonmatrix[i][i] refers to "query i" and "subject i", which is not the same sequence.')
 
     if args.verbose:
         logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y-%m-%d %H:%M:%S', level=logging.INFO)
@@ -364,13 +342,19 @@ def nc_main():
             consider =transform(args.consider)
         else:
             consider = args.consider
-            
-        for acc1, acc2, nc in neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, consider, args.xross_files):
+
+        results = neighborhood_correlation(id2accession, similarities, n_queries, n_ref_seqs, consider, args.xross_files)
+        for acc1, acc2, nc, confidence_interval in results:
             counter += 1
             if counter % 10000 == 0:
                 logging.info(f'{counter} pairs analyzed')
             if nc >= args.nc_thresh:
-                print(acc1, acc2, round(nc, 3))
+                # No point having more precision than 3 digits
+                if args.confidence_interval:
+                    upper, lower = confidence_interval
+                    print(f'{acc1}\t{acc2}\t{nc:.3}\t{lower:.3}\t{upper:.3}')
+                else:
+                    print(f'{acc1}\t{acc2}\t{nc:.3}')
         logging.info(f'{counter} pairs analyzed')
     logging.info(f'Done.')
 
