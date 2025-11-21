@@ -281,10 +281,17 @@ def neighborhood_correlation(id2accession, similar_pairs, n_queries, n_ref_seqs,
         cor, confidence_interval = pearson_correlation(comparison_matrix, a, b, cache)
         yield id2accession[a], id2accession[b], cor, confidence_interval
             
-
+description_text = '''
+snc is a program for computing domain-aware protein-sequence similarity using
+Neighborhood Correlation score. This is a clone of NC_standalone from Dannie
+Durand\'s group, with added experimental features. See https://github.com/arvestad/snc
+for details. The input is a file with pairwise bitscores, and default output has three
+columns: acc1, acc2, and NC score.
+'''
 
 def snc_argparser():
-    ap = argparse.ArgumentParser(description='snc is a program for computing domain-aware protein-sequence similarity using Neighborhood Correlation score. This is a clone of NC_standalone from Dannie Durand\'s group, with added experimental features. See https://github.com/arvestad/snc for details. The input is a file with pairwise bitscores, and default output has three columns: acc1, acc2, and NC score.')
+    ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                 description=description_text)
     ap.add_argument('infile', nargs='+', type=argparse.FileType('r'),
                     default=sys.stdin,
                     help='The infile is the path to a file containing BLAST or DIAMOND output in tabular format (using --outfmt 6 in both tools). Note that you can use several infiles in one go.')
