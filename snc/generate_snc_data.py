@@ -7,7 +7,8 @@ description='''
 Generate test data for snc (and similar tools.)
 
 Sequence pairs that are supposed to be homologous are given a similarity results
-with other sequences that are drawn from a normal distribution with .
+with other sequences that are drawn from a normal distribution with mean `hom_sim`
+and variance `hom_var`.
 
 Non-homologous sequence pairs are given similarity data drawn from
 a uniform distribution, [0, non_sim], where `non_sim` is given

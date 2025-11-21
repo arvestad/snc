@@ -7,7 +7,7 @@ name = "snc"
 authors = [{name = "Lars Arvestad", email = "arve@math.su.se"}]
 classifiers = ["License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"]
 dynamic = ["version", "description"]
-requires-python = ">=3.6"
+requires-python = ">=3.10"
 
 [dependencies]
 scipy = "^1.8.0"
@@ -16,6 +16,13 @@ biopython = "^1.8"
 
 [project.scripts]
 snc = "snc:nc_main"
+generate_snc_data = "snc.generate_snc_data:main"
 rbh = "snc.rbh:rbh_main"
 components = "snc.components:components_main"
 
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
