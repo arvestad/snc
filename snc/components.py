@@ -1,5 +1,6 @@
 import argparse
 from Bio import SeqIO
+import json
 import sys
 import math
 import networkx as nx
@@ -7,7 +8,8 @@ import statistics
 
 
 def create_arg_parser():
-    ap = argparse.ArgumentParser(description='Create clusters based on scores of NC type.')
+    ap = argparse.ArgumentParser(description='Create clusters based on scores of NC type.',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument('infile', help='Filename to data in 3-column format: "id1  id2  float". Each line represents a weighted edge in a graph.' )
     ap.add_argument('-c', '--count', action='store_true',
                     help='Count the number of clusters')
@@ -57,13 +59,14 @@ def print_component_stats(components, discard_size):
 
 def make_json_file(filename, components, n_edges, n_non_edges, n_nodes, discard_size):
     stats = get_component_stats(components, discard_size)
-    stats['n_edges'] = n_edges,
-    stats['n_non_edges'] = n_non_edges,
-    stats['n_nodes'] = n_nodes,
-    stats['components'] = components,
+    stats['n_edges'] = n_edges
+    stats['n_non_edges'] = n_non_edges
+    stats['n_nodes'] = n_nodes
+    stats['components'] = list(map(lambda s: list(s),  components))
 
     with open(filename, 'w') as jh:
         json.dump(stats, jh, indent=4)
+
     
 
 def make_graph(infilename, threshold=0):
@@ -161,7 +164,8 @@ def components_main():
 
     if args.json:
         try:
-            make_json_file(args.json, components, args.discard_size)
+            make_json_file(args.json, components,
+                           n_edges, n_non_edges, graph.number_of_nodes(), args.discard_size)
         except Exception as e:
             print(f'Error saving JSON data to "{args.json}": {str(e)}', file=sys.stderr)
 
@@ -177,4 +181,4 @@ def components_main():
 
 
 if __name__=='__main__':
-    main()
+    components_main()
