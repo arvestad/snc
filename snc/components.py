@@ -7,6 +7,10 @@ import networkx as nx
 import statistics
 
 
+import signal
+signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
+
 def create_arg_parser():
     ap = argparse.ArgumentParser(description='Create clusters based on scores of NC type.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -28,9 +32,11 @@ def create_arg_parser():
     return ap
 
 
-def get_component_stats(components, discard_size):
+def get_stats(graph, components, n_edges, n_discarded_edges):
     stats = {}
+    stats['n_nodes'] = graph.number_of_nodes()
     sizes = list(map(len, components))
+    stats['n_components'] = len(components)
     stats['n_singletons'] = sum(map(lambda n: n==1, sizes))
     stats['median'] = statistics.median(sizes)
     stats['largest'] = max(sizes)
@@ -40,30 +46,16 @@ def get_component_stats(components, discard_size):
         quantiles = 'N/A'
     stats['quantiles'] = quantiles
 
-    stats['n_components'] = len(components)
-    stats['large_enough'] = len(list(filter(lambda sz: sz>= discard_size, sizes)))
-    stats['sizes'] = sizes
+    vertex_pairs_in_components = map(lambda c: len(c)**2, components)
+    component_densities = map(lambda c: nx.density(graph.subgraph(c)), components)
+    stats['graph_density'] = nx.density(graph)
+    stats['mean_component_density'] = statistics.mean(component_densities)
+
     return stats
     
 
-def print_component_stats(components, discard_size):
-    stats = get_component_stats(components, discard_size)
-
-    print('\n# Component statistics', file=sys.stderr)
-    print(f'Number of components: {stats["n_components"]}', file=sys.stderr)
-    print(f'Number of singletons: {stats["n_singletons"]}', file=sys.stderr)
-    print(f'Median component size: {stats["median"]}', file=sys.stderr)
-    print(f'Largest component size: {stats["largest"]}', file=sys.stderr)
-    print(f'Quantiles at: {stats["quantiles"]}', file=sys.stderr)
-
-
-def make_json_file(filename, components, n_edges, n_non_edges, n_nodes, discard_size):
-    stats = get_component_stats(components, discard_size)
-    stats['n_edges'] = n_edges
-    stats['n_non_edges'] = n_non_edges
-    stats['n_nodes'] = n_nodes
-    stats['components'] = list(map(lambda s: list(s),  components))
-
+def make_json_file(filename, components, stats):
+    stats['components'] = list(map(lambda c: list(c), components))
     with open(filename, 'w') as jh:
         json.dump(stats, jh, indent=4)
 
@@ -72,7 +64,7 @@ def make_json_file(filename, components, n_edges, n_non_edges, n_nodes, discard_
 def make_graph(infilename, threshold=0):
     graph = nx.Graph()
     n_edges = 0
-    n_non_edges = 0
+    n_discarded_edges = 0
 
     with open(infilename) as h:
         for lineno, line in enumerate(h):
@@ -89,14 +81,19 @@ def make_graph(infilename, threshold=0):
             else:
                 graph.add_node(id1)
                 graph.add_node(id2)
-                n_non_edges += 1
-    return graph, n_edges, n_non_edges
-                
+                n_discarded_edges += 1
+    return graph, n_edges, n_discarded_edges
 
-def print_components(components, sz_threshold):
+
+def get_components(graph, discard_size):
+    components = nx.connected_components(graph)
+    components = list(filter(lambda c: len(c) >= discard_size, components)) # Remove components deemed too small
+    return components
+              
+
+def print_components(components):
     for component in components:
-        if len(component) >= sz_threshold:
-            print(' '.join(component))
+        print(' '.join(component))
 
 
 def accession_lookup(table, acc_string):
@@ -113,7 +110,7 @@ def accession_lookup(table, acc_string):
     return None
 
 
-def create_fasta_cluster_files(components, seqfile, prefix, sz_threshold):
+def create_fasta_cluster_files(components, seqfile, prefix):
     '''
     Create a Fasta file for each component. The function is slow, because
     the sequence file is traversed once (because assumed large) and
@@ -127,11 +124,10 @@ def create_fasta_cluster_files(components, seqfile, prefix, sz_threshold):
 
     # First note for each sequence in which file to put it
     for component in components:
-        if len(component) >= sz_threshold:
-            cluster_name = f'{prefix}{cluster_idx:0{n_digits_needed}}.fa'
-            cluster_idx += 1
-            for v in component:
-                cluster_dict[v] = cluster_name
+        cluster_name = f'{prefix}{cluster_idx:0{n_digits_needed}}.fa'
+        cluster_idx += 1
+        for v in component:
+            cluster_dict[v] = cluster_name
 
     # Then go through all sequences and append them to the right cluster
     for record in SeqIO.parse(seqfile, 'fasta'):
@@ -150,32 +146,36 @@ def components_main():
     ap = create_arg_parser()
     args = ap.parse_args()
 
-    graph, n_edges, n_non_edges = make_graph(args.infile, args.threshold)
+    graph, n_edges, n_discarded_edges = make_graph(args.infile, args.threshold)
+    components = get_components(graph, args.discard_size)
+
+    if args.count:
+        print(len(components))
+        return
+
+    stats = get_stats(graph, components, n_edges, n_discarded_edges)
+    stats['threshold'] = args.threshold
+    stats['discard_size'] = args.discard_size
+    stats['n_edges'] = n_edges
+    stats['n_discarded_edges'] = n_discarded_edges # pairs we counted NC for but it is below threshold
 
     if args.info:
         print('# Graph statistics', file=sys.stderr)
-        print(f'Number of edges recorded: {n_edges}', file=sys.stderr)
-        print(f'Number of edges discarded (below threshold {args.threshold}): {n_non_edges}', file=sys.stderr)
-        print(f'Number of vertices: {graph.number_of_nodes()}', file=sys.stderr)
-
-    components = list(nx.connected_components(graph))
-    if args.info:
-        print_component_stats(components, args.discard_size)
+        for key, val in stats.items():
+            print(f'{key}: \t{val}', file=sys.stderr)
 
     if args.json:
         try:
-            make_json_file(args.json, components,
-                           n_edges, n_non_edges, graph.number_of_nodes(), args.discard_size)
+            make_json_file(args.json, components, stats)
         except Exception as e:
             print(f'Error saving JSON data to "{args.json}": {str(e)}', file=sys.stderr)
-
-    if args.count:
-        print(len(list(components)))
     else:
-        print_components(components, args.discard_size)
-        if args.seqfile:
-            print('# Creating a FASTA file for each cluster', file=sys.stderr)
-            create_fasta_cluster_files(components, args.seqfile, args.prefix, args.discard_size)
+        print_components(components)
+
+    if args.seqfile:
+        print('# Creating a FASTA file for each cluster', file=sys.stderr)
+        create_fasta_cluster_files(components, args.seqfile, args.prefix)
+
 
 
 
