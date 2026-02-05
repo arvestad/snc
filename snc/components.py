@@ -5,7 +5,7 @@ import sys
 import math
 import networkx as nx
 import statistics
-
+import tabulate
 
 import signal
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
@@ -29,7 +29,30 @@ def create_arg_parser():
                     help='If used, output actual cluster FASTA files containing sequences from this file.')
     ap.add_argument('-t', '--threshold', type=float, default=0.7,
                     help='Threshold that defines cluster. Keep those edges whose weights are at least as high as the threshold.')
+    ap.add_argument('-oh', '--output-help', action='store_true',
+                    help='Output an explanation of the statistics output.')
     return ap
+
+
+def output_help():
+    """
+    Describe the statistics that 'components' report.
+    """
+    info = 'The --info and --json output formats report a number of observations of the input data and output from clustering. Here is a summary.'
+    variables = [
+        ['n_nodes', 'Number of entities (probably sequences) for which there are at least one NC score reported.'],
+        ['n_edges', 'Number of nodes pairs with a "good" NC score, i.e., NC larger than set by --threshold.'],
+        ['discard_size', 'The smallest allowed component size. Smallest possible value is 2.'],
+        ['n_components', 'Number of output clusters, i.e., number of connected components.'],
+        ['n_discarded_nodes', 'Number of  entities in the input which are not in any component.'],
+        ['median', 'Median size of components.'],
+        ['largest', 'Size of the largest component.'],
+        ['quantiles', 'The three sizes that split the distribution of component sizes into quartiles.'],
+        ['graph_density', 'The number of edges in the graph, induced by the input (and --threshold), divided by the number of node pairs.'],
+        ['mean_component_density', 'Reports the mean of component subgraph densities.'],
+        ]
+    table = tabulate.tabulate(variables, headers=['Variable', 'Explanation'])
+    return info + '\n\n' + table
 
 
 def get_stats(graph, components, n_edges, n_discarded_edges):
@@ -146,6 +169,10 @@ def create_fasta_cluster_files(components, seqfile, prefix):
 def components_main():
     ap = create_arg_parser()
     args = ap.parse_args()
+
+    if args.output_help:
+        print(output_help())
+        sys.exit(0)
 
     graph, n_edges, n_discarded_edges = make_graph(args.infile, args.threshold)
     components = get_components(graph, args.discard_size)
