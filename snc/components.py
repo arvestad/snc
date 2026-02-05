@@ -34,10 +34,11 @@ def create_arg_parser():
 
 def get_stats(graph, components, n_edges, n_discarded_edges):
     stats = {}
-    stats['n_nodes'] = graph.number_of_nodes()
+    n_nodes = graph.number_of_nodes()
+    stats['n_nodes'] = n_nodes
     sizes = list(map(len, components))
     stats['n_components'] = len(components)
-    stats['n_singletons'] = sum(map(lambda n: n==1, sizes))
+    stats['n_discarded_nodes'] = n_nodes - sum(sizes) # nr seqs not in clusters
     stats['median'] = statistics.median(sizes)
     stats['largest'] = max(sizes)
     try:
