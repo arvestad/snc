@@ -8,3 +8,7 @@
   and s2 should be uncorrelated with the others.
 * `3c.dd`: Smaller data set created to expose a bug: whenever two highly correlated sequences were not adjacent in
   the similarity matrix due to being far apart in the input, then they were not found as being in the same grouping.
+  
+  
+  
+Durand_GoldStandard.txt  Identifiers taken from Song _et al_ (2008), with mapping to gene family.
