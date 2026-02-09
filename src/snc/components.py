@@ -70,8 +70,7 @@ def get_stats(graph, components, n_edges, n_discarded_edges):
         quantiles = 'N/A'
     stats['quantiles'] = quantiles
 
-    vertex_pairs_in_components = map(lambda c: len(c)**2, components)
-    component_densities = map(lambda c: nx.density(graph.subgraph(c)), components)
+    component_densities = list(map(lambda c: nx.density(graph.subgraph(c)), components))
     stats['graph_density'] = nx.density(graph)
     stats['mean_component_density'] = statistics.mean(component_densities)
 
@@ -98,10 +97,14 @@ def make_graph(infilename, threshold=0):
                 print(f'Error on line {lineno} in "{infilename}": {str(e)}', file=sys.stderr)
                 sys.exit(1)
                 
+            if id1==id2:
+                continue
+            
             val = float(val_s)
             if val > threshold:
-                graph.add_edge(id1, id2)
-                n_edges += 1
+                if not graph.has_edge(id1, id2):
+                    graph.add_edge(id1, id2)
+                    n_edges += 1
             else:
                 graph.add_node(id1)
                 graph.add_node(id2)
@@ -176,6 +179,7 @@ def components_main():
 
     graph, n_edges, n_discarded_edges = make_graph(args.infile, args.threshold)
     components = get_components(graph, args.discard_size)
+
 
     if args.count:
         print(len(components))
