@@ -1,20 +1,21 @@
 [build-system]
-requires = ["flit_core >=3.2,<4"]
-build-backend = "flit_core.buildapi"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "snc"
+description = "Simple Neighbour Joining: command-line tools"
 authors = [{name = "Lars Arvestad", email = "arve@math.su.se"}]
 classifiers = ["License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)"]
-dynamic = ["version", "description"]
+dynamic = ["version"]
 requires-python = ">=3.10"
-
-[dependencies]
-scipy = "^1.8.0"
-numpy = "^1.20.3"
-biopython = "^1.8"
-networkx = "^3.6"
-tabulate = "^0.9"
+dependencies = [
+	     "scipy>=1.8.0",
+	     "numpy>=1.20.3",
+	     "biopython>=1.8",
+	     "networkx>=3.6",
+	     "tabulate>=0.9"
+]
 
 [project.scripts]
 snc = "snc:nc_main"
@@ -28,3 +29,8 @@ addopts = "-ra -q"
 testpaths = [
     "tests",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "snc.version.__version__"}
+
+
