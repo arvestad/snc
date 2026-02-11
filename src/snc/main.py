@@ -146,8 +146,10 @@ def scores_to_comparison_matrix(similar_pairs, nrows, ncols):
     row_indices, col_indices = zip(*similar_pairs.keys())
     row_indices = list(map(fst, row_indices)) # Strip away the file_num to only retain row indices
     comparisons = sp.csr_array((list(similar_pairs.values()), (row_indices, col_indices)), shape=(nrows, ncols), dtype=np.float32)
-    logging.info(f'There are {comparisons.getnnz()} (={100*comparisons.getnnz() / (nrows*ncols):.4}%) non-zero elements in the matrix')
+    logging.info(f'There are {comparisons.nnz} (={100*comparisons.nnz / (nrows*ncols):.4}%) non-zero elements in the matrix')
     return comparisons
+
+
 
 
 def pearson_correlation(comparison_matrix, i, j, cache={}):
@@ -165,26 +167,34 @@ def pearson_correlation(comparison_matrix, i, j, cache={}):
     To avoid recomputing some factors over and over, we put them in a cache supplied
     as a parameter.
     '''
-    row_i = comparison_matrix.getrow(i)
-    row_j = comparison_matrix.getrow(j)
+    row_i = comparison_matrix[i,:]
+    row_j = comparison_matrix[j,:]
     n_cols = comparison_matrix.shape[1]
 
-    if i in cache:
-        m_i, s_i, root_variance_i = cache[i]
-    else:
-        m_i = row_i.mean()
-        s_i = row_i.sum()
-        root_variance_i = math.sqrt(row_i.dot(row_i.transpose())[0,0] - 2 * m_i*s_i + n_cols * m_i * m_i)
-        cache[i] = (m_i, s_i, root_variance_i)
-    if j in cache:
-        m_j, s_j, root_variance_j = cache[j]
-    else:
-        m_j = row_j.mean()
-        s_j = row_j.sum()
-        root_variance_j = math.sqrt(row_j.dot(row_j.transpose())[0,0] - 2 * m_j*s_j + n_cols * m_j * m_j)
-        cache[j] = (m_j, s_j, root_variance_j)
+    # Helper to compute cached statistics
+    def compute_stats(row, idx):
+        if idx in cache:
+            return cache[idx]
 
-    numerator = row_i.dot(row_j.transpose())[0,0] - m_i * s_j - m_j * s_i + n_cols * m_i * m_j
+        # row.mean() and row.sum() return 1×1 sparse arrays → convert to float
+        m = float(row.mean())
+        s = float(row.sum())
+
+        # row.dot(row.T) is 1×1 sparse array
+        self_dot = row.dot(row.T).item()
+
+        root_var = math.sqrt(self_dot - 2 * m * s + n_cols * (m * m))
+
+        cache[idx] = (m, s, root_var)
+        return cache[idx]
+
+    m_i, s_i, root_variance_i = compute_stats(row_i, i)
+    m_j, s_j, root_variance_j = compute_stats(row_j, j)
+
+    # Pearson numerator
+    dot_ij = row_i.dot(row_j).item()
+
+    numerator = dot_ij - m_i * s_j - m_j * s_i + n_cols * m_i * m_j
     denominator = root_variance_i * root_variance_j
 
     correlation_coefficient = numerator / denominator
@@ -207,7 +217,10 @@ def calculate_confidence_interval(n, correlation_coeff, percentile_point=1.96):
     # I follow the tutorial at Statology as a "scaffold" for my code:
     #    https://www.statology.org/confidence-interval-correlation-coefficient/
     
-    assert correlation_coeff < 1.0, f'calculate_confidence_interval: Input correlation was {correlation_coeff=}'
+    # First ensure that correlation is not 1.0, or too close to 1.0
+    epsilon = 1e-15             # Close to machine precision
+    if correlation_coeff > 1-1e-15:
+        correlation_coeff = 1-1e-15
 
     z_r = math.atanh(correlation_coeff) # Fisher's transformation
     gaussian_bound = percentile_point / math.sqrt(n - 3)
